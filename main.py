@@ -3,6 +3,7 @@
 
 import logging
 import os
+import sys
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -23,11 +24,13 @@ from handlers import (
     PHONE
 )
 from database import initialize_database
+from aiohttp import web
 
-# Настройка логирования
+# Настройка расширенного логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG,  # Более подробное логирование
+    stream=sys.stdout  # Явно указываем вывод в stdout для Heroku
 )
 logger = logging.getLogger(__name__)
 
@@ -36,15 +39,33 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "YOUR_TOKEN_HERE")
 PORT = int(os.environ.get("PORT", "8443"))
 HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME")
 
+# Создаем простой обработчик для проверки доступности
+async def webhook_info(request):
+    return web.Response(text="Webhook server is running!")
+
 def main() -> None:
     """Запускает бота."""
+    logger.debug("Начало инициализации бота")
+    
     # Инициализация базы данных
-    initialize_database()
+    try:
+        initialize_database()
+        logger.debug("База данных инициализирована успешно")
+    except Exception as e:
+        logger.error(f"Ошибка при инициализации базы данных: {e}")
+        logger.warning("Продолжаем без базы данных")
     
     # Создаем приложение
+    logger.debug(f"Создаем приложение с токеном: {TOKEN[:5]}...{TOKEN[-5:]}")
     application = Application.builder().token(TOKEN).build()
     
+    # Добавляем обработчики
+    logger.debug("Регистрируем обработчики команд")
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    
     # Создаем обработчик разговора для сбора заявки
+    logger.debug("Регистрируем ConversationHandler")
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(button_handler, pattern='^request$|^request_package_'),
@@ -63,32 +84,64 @@ def main() -> None:
         fallbacks=[
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel, pattern='^cancel_request$')
-        ]
+        ],
+        per_message=True  # Добавляем этот параметр для устранения предупреждения
     )
-
-    # Добавляем обработчики
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(conv_handler)
+    
+    # Добавляем обработчик для кнопок
+    logger.debug("Регистрируем обработчик CallbackQueryHandler")
     application.add_handler(CallbackQueryHandler(button_handler))
     
     # Обработчик для текстовых сообщений, которые не обрабатываются ConversationHandler
+    logger.debug("Регистрируем обработчик текстовых сообщений")
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
+    # Регистрируем обработчик ошибок
+    async def error_handler(update, context):
+        logger.error(f"Возникла ошибка: {context.error}")
+        
+        if update:
+            # Отправляем сообщение пользователю о том, что произошла ошибка
+            try:
+                if update.effective_message:
+                    await update.effective_message.reply_text(
+                        "Извините, произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте снова."
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
+    
+    application.add_error_handler(error_handler)
+    
     # Запускаем бота
     if HEROKU_APP_NAME:
+        # Формируем URL для webhook с добавлением токена
+        webhook_url = f"https://{HEROKU_APP_NAME}.herokuapp.com/{TOKEN}"
+        logger.info(f"Запуск веб-хука на URL: {webhook_url}")
+        
+        # Создаем простой веб-сервер для проверки доступности
+        app = web.Application()
+        app.router.add_get("/", webhook_info)
+        app.router.add_get("/webhook_info", webhook_info)
+        
         # Запуск веб-хука для Heroku
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"https://{HEROKU_APP_NAME}.herokuapp.com/{TOKEN}"
+            url_path=TOKEN,  # Важно: этот путь должен совпадать с концом webhook_url
+            webhook_url=webhook_url,
+            drop_pending_updates=True,  # Игнорировать накопившиеся обновления
+            webhook_max_connections=40,  # Максимальное количество соединений
+            allowed_updates=["message", "callback_query"],  # Только нужные типы обновлений
+            webapp=app  # Добавляем наш тестовый веб-сервер
         )
         logger.info(f"Бот запущен в режиме webhook на Heroku")
     else:
         # Запуск в режиме polling для локальной разработки
+        logger.info("Запуск в режиме polling (локальная разработка)")
         application.run_polling()
         logger.info("Бот запущен в режиме polling")
 
 if __name__ == '__main__':
+    logger.info("Запуск скрипта main.py")
     main()
