@@ -24,7 +24,6 @@ from handlers import (
     PHONE
 )
 from database import initialize_database
-from aiohttp import web
 
 # Настройка расширенного логирования
 logging.basicConfig(
@@ -38,10 +37,6 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "YOUR_TOKEN_HERE")
 PORT = int(os.environ.get("PORT", "8443"))
 HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME")
-
-# Создаем простой обработчик для проверки доступности
-async def webhook_info(request):
-    return web.Response(text="Webhook server is running!")
 
 def main() -> None:
     """Запускает бота."""
@@ -119,26 +114,17 @@ def main() -> None:
         webhook_url = f"https://{HEROKU_APP_NAME}.herokuapp.com/{TOKEN}"
         logger.info(f"Запуск веб-хука на URL: {webhook_url}")
         
-        # Создаем простой веб-сервер для проверки доступности
-        app = web.Application()
-        app.router.add_get("/", webhook_info)
-        app.router.add_get("/webhook_info", webhook_info)
-        
-        # Запуск веб-хука для Heroku
+        # Запуск веб-хука для Heroku - УПРОЩЕННАЯ ВЕРСИЯ
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            url_path=TOKEN,  # Важно: этот путь должен совпадать с концом webhook_url
-            webhook_url=webhook_url,
-            drop_pending_updates=True,  # Игнорировать накопившиеся обновления
-            webhook_max_connections=40,  # Максимальное количество соединений
-            allowed_updates=["message", "callback_query"],  # Только нужные типы обновлений
-            webapp=app  # Добавляем наш тестовый веб-сервер
+            url_path=TOKEN,
+            webhook_url=webhook_url
         )
         logger.info(f"Бот запущен в режиме webhook на Heroku")
     else:
         # Запуск в режиме polling для локальной разработки
-        logger.info("Запуск в режиме polling (локальная разработка)")
+        logger.info("Запуск в режиме polling (локальная разработки)")
         application.run_polling()
         logger.info("Бот запущен в режиме polling")
 
