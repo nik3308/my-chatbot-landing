@@ -14,17 +14,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# URL базы данных Heroku
-DATABASE_URL = os.environ.get('DATABASE_URL')
-
 def get_connection():
     """Создает соединение с базой данных."""
+    # Получаем URL базы данных из переменных окружения
+    database_url = os.environ.get('DATABASE_URL')
+    
+    if not database_url:
+        logger.warning("DATABASE_URL не найден в переменных окружения")
+        return None
+    
     # Для Heroku PostgreSQL, необходимо заменить postgresql:// на postgres://
-    if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
-        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
     
     try:
-        return psycopg2.connect(DATABASE_URL)
+        return psycopg2.connect(database_url)
     except Exception as e:
         logger.error(f"Ошибка подключения к базе данных: {e}")
         return None
