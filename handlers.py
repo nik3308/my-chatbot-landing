@@ -23,7 +23,8 @@ from content import (
     UNKNOWN_REQUEST_MESSAGE,
     CANCEL_REQUEST_MESSAGE
 )
-from database import save_request
+# Закомментируем импорт базы данных
+# from database import save_request
 
 # Настройка логирования
 logging.basicConfig(
@@ -41,13 +42,19 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
     logger.info(f"Пользователь {user.id} ({user.username}) запустил бота")
     
-    await update.message.reply_html(
-        WELCOME_MESSAGE,
-        reply_markup=main_menu_keyboard()
-    )
+    # Добавим больше логирования
+    try:
+        await update.message.reply_html(
+            WELCOME_MESSAGE,
+            reply_markup=main_menu_keyboard()
+        )
+        logger.info(f"Отправлено приветственное сообщение пользователю {user.id}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке приветствия: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /help."""
+    logger.info(f"Пользователь {update.effective_user.id} запросил справку")
     await update.message.reply_text(
         "Я могу рассказать о пакетах услуг, этапах разработки бота и принять вашу заявку.",
         reply_markup=main_menu_keyboard()
@@ -57,6 +64,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик текстовых сообщений."""
     text = update.message.text.lower()
+    logger.info(f"Получено сообщение: '{text}' от пользователя {update.effective_user.id}")
     
     # Проверяем, находится ли пользователь в процессе оформления заявки
     user_state = context.user_data.get('state')
@@ -67,16 +75,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     # Если не в процессе оформления заявки, обрабатываем обычные сообщения
     if any(keyword in text for keyword in ["стоимость", "цена", "тариф", "пакет", "услуг"]):
+        logger.info(f"Отправляем информацию о пакетах пользователю {update.effective_user.id}")
         await update.message.reply_html(
             get_packages_info(),
             reply_markup=packages_keyboard()
         )
     elif any(keyword in text for keyword in ["этап", "процесс", "как работает", "разработк"]):
+        logger.info(f"Отправляем информацию об этапах пользователю {update.effective_user.id}")
         await update.message.reply_html(
             get_stages_info(),
             reply_markup=stages_keyboard()
         )
     elif any(keyword in text for keyword in ["заявк", "оставить", "связаться", "купить", "заказать"]):
+        logger.info(f"Начинаем оформление заявки для пользователя {update.effective_user.id}")
         context.user_data['state'] = 'waiting_for_name'
         await update.message.reply_text(
             REQUEST_START_MESSAGE,
@@ -84,6 +95,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         )
         return NAME
     else:
+        logger.info(f"Отправляем сообщение о непонятном запросе пользователю {update.effective_user.id}")
         await update.message.reply_text(
             UNKNOWN_REQUEST_MESSAGE,
             reply_markup=main_menu_keyboard()
@@ -96,6 +108,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Обработчик нажатий на кнопки."""
     query = update.callback_query
     await query.answer()
+    
+    logger.info(f"Пользователь {query.from_user.id} нажал кнопку с data: {query.data}")
     
     if query.data == 'packages':
         await query.message.edit_text(
@@ -170,6 +184,8 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['name'] = update.message.text
     context.user_data['state'] = 'waiting_for_phone'
     
+    logger.info(f"Получено имя пользователя: {context.user_data['name']}")
+    
     await update.message.reply_text(
         get_phone_request_message(context.user_data['name']),
         reply_markup=cancel_request_keyboard()
@@ -180,19 +196,20 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Получает телефон пользователя и завершает сбор заявки."""
     context.user_data['phone'] = update.message.text
     
+    logger.info(f"Получен телефон пользователя: {context.user_data['phone']}")
+    
     # Получаем информацию о выбранном пакете
     package_key = context.user_data.get('selected_package')
     package_name = PACKAGES[package_key]['name'] if package_key else None
     
-    # Сохраняем заявку в базу данных
-    user = update.effective_user
-    save_request(
-        user_id=user.id,
-        username=user.username,
-        name=context.user_data['name'],
-        phone=context.user_data['phone'],
-        package=package_name
-    )
+    # Закомментируем сохранение заявки в базу данных
+    # save_request(
+    #     user_id=update.effective_user.id,
+    #     username=update.effective_user.username,
+    #     name=context.user_data['name'],
+    #     phone=context.user_data['phone'],
+    #     package=package_name
+    # )
     
     # Отправляем сообщение пользователю
     await update.message.reply_html(
@@ -210,14 +227,15 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await context.bot.send_message(
                 chat_id=ADMIN_USER_ID,
                 text=get_admin_notification_message(
-                    user.id,
-                    user.username,
+                    update.effective_user.id,
+                    update.effective_user.username,
                     context.user_data['name'],
                     context.user_data['phone'],
                     package_name
                 ),
                 parse_mode='HTML'
             )
+            logger.info(f"Отправлено уведомление администратору о новой заявке")
         except Exception as e:
             logger.error(f"Ошибка при отправке уведомления администратору: {e}")
     
@@ -242,4 +260,5 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=main_menu_keyboard()
         )
     
+    logger.info(f"Пользователь {update.effective_user.id} отменил оформление заявки")
     return ConversationHandler.END
