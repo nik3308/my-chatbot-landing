@@ -86,7 +86,11 @@ def main() -> None:
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel, pattern='^cancel_request$')
         ],
-        per_message=True
+        # Заменяем настройку per_message на False
+        per_message=False,
+        # Добавляем настройку для игнорирования предупреждений
+        persistent=False,
+        name="main_conversation"
     )
     application.add_handler(conv_handler)
     
