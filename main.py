@@ -4,7 +4,7 @@
 import logging
 import os
 import sys
-from telegram import Update
+from telegram import Update  # Добавлен импорт класса Update
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -29,7 +29,7 @@ from database import initialize_database
 # Настройка расширенного логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG,
+    level=logging.INFO,  # Изменен уровень логирования с DEBUG на INFO для уменьшения шума в логах
     stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ def main() -> None:
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel, pattern='^cancel_request$')
         ],
-        per_message=False
+        per_message=True  # Изменено с False на True для правильной обработки CallbackQueryHandler
     )
     application.add_handler(conv_handler)
     
@@ -112,8 +112,9 @@ def main() -> None:
     
     application.add_error_handler(error_handler)
     
-    # Запускаем бота
+    # Проверка переменных окружения перед запуском
     if HEROKU_APP_NAME:
+        logger.info(f"Обнаружена переменная HEROKU_APP_NAME: {HEROKU_APP_NAME}")
         # Формируем URL для webhook
         webhook_url = f"https://{HEROKU_APP_NAME}.herokuapp.com/{TOKEN}"
         logger.info(f"Запуск веб-хука на URL: {webhook_url}")
@@ -127,7 +128,7 @@ def main() -> None:
         )
     else:
         # Запуск в режиме polling для локальной разработки
-        logger.info("Запуск в режиме polling (локальная разработка)")
+        logger.warning("HEROKU_APP_NAME не установлен, запуск в режиме polling (локальная разработка)")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
