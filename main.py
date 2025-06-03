@@ -4,7 +4,7 @@
 import logging
 import os
 import sys
-from telegram import Update  # Добавлен импорт класса Update
+from telegram import Update
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -24,12 +24,13 @@ from handlers import (
     NAME,
     PHONE
 )
-from database import initialize_database
+# Закомментируем импорт базы данных
+# from database import initialize_database
 
 # Настройка расширенного логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,  # Изменен уровень логирования с DEBUG на INFO для уменьшения шума в логах
+    level=logging.INFO,
     stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
@@ -47,13 +48,13 @@ def main() -> None:
     """Запускает бота."""
     logger.info("Начало инициализации бота")
     
-    # Инициализация базы данных
-    try:
-        initialize_database()
-        logger.info("База данных инициализирована успешно")
-    except Exception as e:
-        logger.error(f"Ошибка при инициализации базы данных: {e}")
-        logger.warning("Продолжаем без базы данных")
+    # Закомментируем инициализацию базы данных
+    # try:
+    #     initialize_database()
+    #     logger.info("База данных инициализирована успешно")
+    # except Exception as e:
+    #     logger.error(f"Ошибка при инициализации базы данных: {e}")
+    #     logger.warning("Продолжаем без базы данных")
     
     # Создаем приложение
     logger.info(f"Создаем приложение с токеном: {TOKEN[:5]}...{TOKEN[-5:]}")
@@ -85,7 +86,7 @@ def main() -> None:
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel, pattern='^cancel_request$')
         ],
-        per_message=True  # Изменено с False на True для правильной обработки CallbackQueryHandler
+        per_message=True
     )
     application.add_handler(conv_handler)
     
@@ -94,7 +95,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_handler))
     
     # Обработчик для текстовых сообщений вне ConversationHandler
-    # Важно: этот обработчик должен быть после ConversationHandler
     logger.info("Регистрируем обработчик текстовых сообщений")
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
@@ -112,7 +112,7 @@ def main() -> None:
     
     application.add_error_handler(error_handler)
     
-    # Проверка переменных окружения перед запуском
+    # Запускаем бота
     if HEROKU_APP_NAME:
         logger.info(f"Обнаружена переменная HEROKU_APP_NAME: {HEROKU_APP_NAME}")
         # Формируем URL для webhook
