@@ -28,39 +28,43 @@ from database import initialize_database
 # Настройка расширенного логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG,  # Более подробное логирование
-    stream=sys.stdout  # Явно указываем вывод в stdout для Heroku
+    level=logging.DEBUG,
+    stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
 
 # Получение токена из переменных окружения
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "YOUR_TOKEN_HERE")
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+if not TOKEN:
+    logger.error("TELEGRAM_TOKEN не найден в переменных окружения!")
+    sys.exit(1)
+
 PORT = int(os.environ.get("PORT", "8443"))
 HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME")
 
 def main() -> None:
     """Запускает бота."""
-    logger.debug("Начало инициализации бота")
+    logger.info("Начало инициализации бота")
     
     # Инициализация базы данных
     try:
         initialize_database()
-        logger.debug("База данных инициализирована успешно")
+        logger.info("База данных инициализирована успешно")
     except Exception as e:
         logger.error(f"Ошибка при инициализации базы данных: {e}")
         logger.warning("Продолжаем без базы данных")
     
     # Создаем приложение
-    logger.debug(f"Создаем приложение с токеном: {TOKEN[:5]}...{TOKEN[-5:]}")
+    logger.info(f"Создаем приложение с токеном: {TOKEN[:5]}...{TOKEN[-5:]}")
     application = Application.builder().token(TOKEN).build()
     
-    # Добавляем обработчики
-    logger.debug("Регистрируем обработчики команд")
+    # Добавляем обработчики команд
+    logger.info("Регистрируем обработчики команд")
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     
     # Создаем обработчик разговора для сбора заявки
-    logger.debug("Регистрируем ConversationHandler")
+    logger.info("Регистрируем ConversationHandler")
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(button_handler, pattern='^request$|^request_package_'),
@@ -80,29 +84,28 @@ def main() -> None:
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel, pattern='^cancel_request$')
         ],
-        per_message=True  # Добавляем этот параметр для устранения предупреждения
+        per_message=False
     )
     application.add_handler(conv_handler)
     
-    # Добавляем обработчик для кнопок
-    logger.debug("Регистрируем обработчик CallbackQueryHandler")
+    # Добавляем обработчик для кнопок (для тех, что не в ConversationHandler)
+    logger.info("Регистрируем обработчик CallbackQueryHandler")
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    # Обработчик для текстовых сообщений, которые не обрабатываются ConversationHandler
-    logger.debug("Регистрируем обработчик текстовых сообщений")
+    # Обработчик для текстовых сообщений вне ConversationHandler
+    # Важно: этот обработчик должен быть после ConversationHandler
+    logger.info("Регистрируем обработчик текстовых сообщений")
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Регистрируем обработчик ошибок
     async def error_handler(update, context):
         logger.error(f"Возникла ошибка: {context.error}")
         
-        if update:
-            # Отправляем сообщение пользователю о том, что произошла ошибка
+        if update and update.effective_message:
             try:
-                if update.effective_message:
-                    await update.effective_message.reply_text(
-                        "Извините, произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте снова."
-                    )
+                await update.effective_message.reply_text(
+                    "Извините, произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте снова."
+                )
             except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
     
@@ -110,23 +113,21 @@ def main() -> None:
     
     # Запускаем бота
     if HEROKU_APP_NAME:
-        # Формируем URL для webhook с добавлением токена
+        # Формируем URL для webhook
         webhook_url = f"https://{HEROKU_APP_NAME}.herokuapp.com/{TOKEN}"
         logger.info(f"Запуск веб-хука на URL: {webhook_url}")
         
-        # Запуск веб-хука для Heroku - УПРОЩЕННАЯ ВЕРСИЯ
+        # Запуск веб-хука для Heroku
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
             url_path=TOKEN,
             webhook_url=webhook_url
         )
-        logger.info(f"Бот запущен в режиме webhook на Heroku")
     else:
         # Запуск в режиме polling для локальной разработки
-        logger.info("Запуск в режиме polling (локальная разработки)")
-        application.run_polling()
-        logger.info("Бот запущен в режиме polling")
+        logger.info("Запуск в режиме polling (локальная разработка)")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     logger.info("Запуск скрипта main.py")
