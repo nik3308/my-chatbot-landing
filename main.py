@@ -24,8 +24,6 @@ from handlers import (
     NAME,
     PHONE
 )
-# Закомментируем импорт базы данных
-# from database import initialize_database
 
 # Настройка расширенного логирования
 logging.basicConfig(
@@ -44,21 +42,25 @@ if not TOKEN:
 PORT = int(os.environ.get("PORT", "8443"))
 HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME")
 
+# Функция для инициализации после запуска
+async def post_init(application: Application) -> None:
+    """Выполняется после инициализации бота"""
+    bot_info = await application.bot.get_me()
+    logger.info("=" * 60)
+    logger.info(f"✅ БОТ ЗАПУЩЕН УСПЕШНО!")
+    logger.info(f"🤖 Имя: {bot_info.first_name}")
+    logger.info(f"📱 Username: @{bot_info.username}")
+    logger.info(f"🆔 ID: {bot_info.id}")
+    logger.info(f"🌐 Режим: {'Webhook' if HEROKU_APP_NAME else 'Polling'}")
+    logger.info("=" * 60)
+
 def main() -> None:
     """Запускает бота."""
     logger.info("Начало инициализации бота")
     
-    # Закомментируем инициализацию базы данных
-    # try:
-    #     initialize_database()
-    #     logger.info("База данных инициализирована успешно")
-    # except Exception as e:
-    #     logger.error(f"Ошибка при инициализации базы данных: {e}")
-    #     logger.warning("Продолжаем без базы данных")
-    
-    # Создаем приложение
+    # Создаем приложение с post_init
     logger.info(f"Создаем приложение с токеном: {TOKEN[:5]}...{TOKEN[-5:]}")
-    application = Application.builder().token(TOKEN).build()
+    application = Application.builder().token(TOKEN).post_init(post_init).build()
     
     # Добавляем обработчики команд
     logger.info("Регистрируем обработчики команд")
@@ -69,8 +71,7 @@ def main() -> None:
     logger.info("Регистрируем ConversationHandler")
     conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(button_handler, pattern='^request$|^request_package_'),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
+            CallbackQueryHandler(button_handler, pattern='^request$|^request_package_')
         ],
         states={
             NAME: [
@@ -86,30 +87,39 @@ def main() -> None:
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(cancel, pattern='^cancel_request$')
         ],
-        # Заменяем настройку per_message на False
         per_message=False,
-        # Добавляем настройку для игнорирования предупреждений
         persistent=False,
-        name="main_conversation"
+        name="request_conversation"
     )
     application.add_handler(conv_handler)
     
-    # Добавляем обработчик для кнопок (для тех, что не в ConversationHandler)
+    # Добавляем обработчик для всех остальных кнопок
     logger.info("Регистрируем обработчик CallbackQueryHandler")
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    # Обработчик для текстовых сообщений вне ConversationHandler
+    # Обработчик для текстовых сообщений (только для тех, что не в ConversationHandler)
+    # Важно: этот обработчик должен быть последним!
     logger.info("Регистрируем обработчик текстовых сообщений")
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Регистрируем обработчик ошибок
     async def error_handler(update, context):
-        logger.error(f"Возникла ошибка: {context.error}")
+        """Обработчик ошибок с подробным логированием"""
+        logger.error(f"Возникла ошибка: {context.error}", exc_info=context.error)
         
+        # Логируем детали обновления
+        if update:
+            if update.effective_user:
+                logger.error(f"Пользователь: {update.effective_user.id} (@{update.effective_user.username})")
+            if update.effective_message:
+                logger.error(f"Сообщение: {update.effective_message.text}")
+        
+        # Пытаемся ответить пользователю
         if update and update.effective_message:
             try:
                 await update.effective_message.reply_text(
-                    "Извините, произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте снова."
+                    "Извините, произошла ошибка при обработке вашего запроса. "
+                    "Пожалуйста, попробуйте снова или используйте /start"
                 )
             except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
@@ -128,12 +138,17 @@ def main() -> None:
             listen="0.0.0.0",
             port=PORT,
             url_path=TOKEN,
-            webhook_url=webhook_url
+            webhook_url=webhook_url,
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True  # Сбрасываем старые обновления
         )
     else:
         # Запуск в режиме polling для локальной разработки
         logger.warning("HEROKU_APP_NAME не установлен, запуск в режиме polling (локальная разработка)")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True  # Сбрасываем старые обновления
+        )
 
 if __name__ == '__main__':
     logger.info("Запуск скрипта main.py")
