@@ -1,19 +1,30 @@
 import asyncio
 import logging
 import os
-import smtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
-from aiogram import Bot
 from datetime import datetime
-import json
+
+try:
+    import smtplib
+    from email.mime.text import MimeText
+    from email.mime.multipart import MimeMultipart
+    EMAIL_AVAILABLE = True
+except ImportError:
+    EMAIL_AVAILABLE = False
+    print("⚠️ Email библиотеки недоступны")
+
+try:
+    from aiogram import Bot
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
+    print("⚠️ Telegram библиотеки недоступны")
 
 class NotificationService:
     """Сервис для отправки уведомлений менеджерам"""
     
     def __init__(self):
         self.bot_token = os.getenv('BOT_TOKEN')
-        self.admin_chat_id = os.getenv('ADMIN_CHAT_ID')  # ID чата для уведомлений
+        self.admin_chat_id = os.getenv('ADMIN_CHAT_ID')
         self.manager_email = os.getenv('MANAGER_EMAIL')
         self.smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
         self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
@@ -22,8 +33,12 @@ class NotificationService:
         
     async def send_telegram_notification(self, application_data: dict):
         """Отправляет уведомление в Telegram админ-чат"""
+        if not TELEGRAM_AVAILABLE:
+            print("❌ Telegram библиотеки недоступны")
+            return False
+            
         if not self.bot_token or not self.admin_chat_id:
-            logging.warning("Telegram уведомления не настроены (нет BOT_TOKEN или ADMIN_CHAT_ID)")
+            print("⚠️ Telegram уведомления не настроены (нет BOT_TOKEN или ADMIN_CHAT_ID)")
             return False
             
         try:
@@ -62,17 +77,21 @@ class NotificationService:
             )
             
             await bot.session.close()
-            logging.info(f"Telegram уведомление отправлено для заявки #{application_data['id']}")
+            print(f"✅ Telegram уведомление отправлено для заявки #{application_data['id']}")
             return True
             
         except Exception as e:
-            logging.error(f"Ошибка отправки Telegram уведомления: {e}")
+            print(f"❌ Ошибка отправки Telegram уведомления: {e}")
             return False
     
     def send_email_notification(self, application_data: dict):
         """Отправляет email уведомление менеджеру"""
+        if not EMAIL_AVAILABLE:
+            print("❌ Email библиотеки недоступны")
+            return False
+            
         if not all([self.manager_email, self.smtp_username, self.smtp_password]):
-            logging.warning("Email уведомления не настроены")
+            print("⚠️ Email уведомления не настроены")
             return False
             
         try:
@@ -82,75 +101,19 @@ class NotificationService:
             msg['To'] = self.manager_email
             msg['Subject'] = f"Новая заявка #{application_data['id']} - {application_data['name']}"
             
-            # Форматируем данные пакета
-            package_names = {
-                'basic': 'Базовый пакет (85 000₽)',
-                'advanced': 'Продвинутый пакет (150 000₽)',
-                'premium': 'Премиум пакет (250 000₽)'
-            }
-            package_name = package_names.get(
-                application_data.get('package_interest', ''), 
-                'Пакет не указан'
-            )
-            
-            # HTML содержимое письма
-            html_body = f"""
-            <html>
-            <body style="font-family: Arial, sans-serif;">
-                <div style="background: #007bff; color: white; padding: 20px; text-align: center;">
-                    <h1>🆕 Новая заявка #{application_data['id']}</h1>
-                </div>
-                
-                <div style="padding: 20px;">
-                    <h2>Данные клиента:</h2>
-                    <table style="border-collapse: collapse; width: 100%;">
-                        <tr>
-                            <td style="border: 1px solid #ddd; padding: 8px; background: #f2f2f2;"><strong>👤 Имя:</strong></td>
-                            <td style="border: 1px solid #ddd; padding: 8px;">{application_data['name']}</td>
-                        </tr>
-                        <tr>
-                            <td style="border: 1px solid #ddd; padding: 8px; background: #f2f2f2;"><strong>📞 Телефон:</strong></td>
-                            <td style="border: 1px solid #ddd; padding: 8px;"><a href="tel:{application_data['phone']}">{application_data['phone']}</a></td>
-                        </tr>
-                        <tr>
-                            <td style="border: 1px solid #ddd; padding: 8px; background: #f2f2f2;"><strong>📦 Пакет:</strong></td>
-                            <td style="border: 1px solid #ddd; padding: 8px;">{package_name}</td>
-                        </tr>
-                        <tr>
-                            <td style="border: 1px solid #ddd; padding: 8px; background: #f2f2f2;"><strong>🆔 Telegram ID:</strong></td>
-                            <td style="border: 1px solid #ddd; padding: 8px;">{application_data['user_id']}</td>
-                        </tr>
-                        <tr>
-                            <td style="border: 1px solid #ddd; padding: 8px; background: #f2f2f2;"><strong>⏰ Время заявки:</strong></td>
-                            <td style="border: 1px solid #ddd; padding: 8px;">{application_data['created_at']}</td>
-                        </tr>
-                    </table>
-                    
-                    <h3>🎯 Рекомендуемые действия:</h3>
-                    <ul>
-                        <li>☎️ Позвонить клиенту в рабочее время (ПН-ПТ 9:00-18:00)</li>
-                        <li>💬 Обсудить детали проекта и требования</li>
-                        <li>📊 Подготовить коммерческое предложение</li>
-                        <li>📅 Запланировать встречу или звонок</li>
-                    </ul>
-                    
-                    <div style="text-align: center; margin: 20px 0;">
-                        <a href="https://my-chatbot-landing.herokuapp.com" 
-                           style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
-                           🔗 Открыть админ-панель
-                        </a>
-                    </div>
-                </div>
-                
-                <div style="background: #f8f9fa; padding: 15px; text-align: center; color: #666;">
-                    <p>Это автоматическое уведомление от Telegram-бота AI-решения</p>
-                    <p>Время отправки: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</p>
-                </div>
-            </body>
-            </html>
+            # Простое текстовое содержимое
+            text_body = f"""
+Новая заявка #{application_data['id']}
+
+Клиент: {application_data['name']}
+Телефон: {application_data['phone']}
+Telegram ID: {application_data['user_id']}
+Время: {application_data['created_at']}
+
+Админ-панель: https://my-chatbot-landing.herokuapp.com
             """
             
-            msg.attach(MimeText(html_body, 'html', 'utf-8'))
+            msg.attach(MimeText(text_body, 'plain', 'utf-8'))
             
             # Отправляем письмо
             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
@@ -160,37 +123,49 @@ class NotificationService:
             server.sendmail(self.smtp_username, self.manager_email, text)
             server.quit()
             
-            logging.info(f"Email уведомление отправлено для заявки #{application_data['id']}")
+            print(f"✅ Email уведомление отправлено для заявки #{application_data['id']}")
             return True
             
         except Exception as e:
-            logging.error(f"Ошибка отправки email уведомления: {e}")
+            print(f"❌ Ошибка отправки email уведомления: {e}")
             return False
     
     async def send_all_notifications(self, application_data: dict):
         """Отправляет все типы уведомлений"""
+        print(f"🔔 Отправка уведомлений для заявки #{application_data['id']}")
+        
         results = {
             'telegram': False,
             'email': False
         }
         
         # Telegram уведомление (асинхронно)
-        results['telegram'] = await self.send_telegram_notification(application_data)
+        try:
+            results['telegram'] = await self.send_telegram_notification(application_data)
+        except Exception as e:
+            print(f"❌ Ошибка Telegram уведомления: {e}")
         
         # Email уведомление (синхронно)
-        results['email'] = self.send_email_notification(application_data)
+        try:
+            results['email'] = self.send_email_notification(application_data)
+        except Exception as e:
+            print(f"❌ Ошибка Email уведомления: {e}")
         
         # Логируем результаты
         sent_notifications = [k for k, v in results.items() if v]
         if sent_notifications:
-            logging.info(f"Уведомления отправлены: {', '.join(sent_notifications)}")
+            print(f"✅ Уведомления отправлены: {', '.join(sent_notifications)}")
         else:
-            logging.warning("Ни одно уведомление не было отправлено")
+            print("⚠️ Ни одно уведомление не было отправлено")
         
         return results
     
     async def send_daily_report(self):
         """Отправляет ежедневный отчет"""
+        if not TELEGRAM_AVAILABLE:
+            print("❌ Telegram библиотеки недоступны для отчета")
+            return False
+            
         try:
             from database_service import DatabaseService
             
@@ -203,6 +178,7 @@ class NotificationService:
             today_apps = [app for app in recent_apps if app.created_at.date() == today]
             
             if not self.admin_chat_id or not self.bot_token:
+                print("⚠️ Настройки Telegram для отчета не найдены")
                 return False
             
             bot = Bot(token=self.bot_token)
@@ -238,9 +214,9 @@ class NotificationService:
             )
             
             await bot.session.close()
-            logging.info("Ежедневный отчет отправлен")
+            print("✅ Ежедневный отчет отправлен")
             return True
             
         except Exception as e:
-            logging.error(f"Ошибка отправки ежедневного отчета: {e}")
+            print(f"❌ Ошибка отправки ежедневного отчета: {e}")
             return False
