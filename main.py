@@ -12,7 +12,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # Импорт наших модулей
 from models import create_tables
 from database_service import DatabaseService
-from notification_service import NotificationService
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 # Получение конфигурации из переменных окружения
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 COMPANY_NAME = os.getenv('COMPANY_NAME', 'AI-решения')
-MANAGER_PHONE = os.getenv('MANAGER_PHONE', '+7 (XXX) XXX-XX-XX')
+MANAGER_PHONE = os.getenv('MANAGER_PHONE', '+7 (999) 123-45-67')
 MANAGER_EMAIL_CONTACT = os.getenv('MANAGER_EMAIL_CONTACT', 'info@ai-solutions.ru')
 WORK_HOURS = os.getenv('WORK_HOURS', 'ПН-ПТ с 9:00 до 18:00 МСК')
 
@@ -33,7 +32,25 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # Инициализация сервиса уведомлений
-notification_service = NotificationService()
+try:
+    from notification_service import NotificationService
+    notification_service = NotificationService()
+    NOTIFICATIONS_AVAILABLE = True
+    print("✅ Сервис уведомлений подключен")
+except ImportError:
+    print("⚠️ Сервис уведомлений недоступен - используем заглушку")
+    NOTIFICATIONS_AVAILABLE = False
+    
+    class MockNotificationService:
+        async def send_all_notifications(self, data):
+            print(f"🔔 [MOCK] Уведомление: Новая заявка #{data['id']} - {data['name']}")
+            return {"telegram": False, "email": False}
+        
+        async def send_daily_report(self):
+            print("📊 [MOCK] Ежедневный отчет")
+            return False
+    
+    notification_service = MockNotificationService()
 
 # Состояния для FSM
 class ContactForm(StatesGroup):
@@ -125,6 +142,11 @@ def get_contact_menu():
     builder.adjust(1)
     return builder.as_markup()
 
+def is_admin_chat(chat_id: int) -> bool:
+    """Проверяет, является ли чат админским"""
+    admin_chat_id = os.getenv('ADMIN_CHAT_ID')
+    return admin_chat_id and str(chat_id) == admin_chat_id
+
 async def register_user(message_or_callback):
     """Регистрирует или обновляет пользователя в базе данных"""
     user = message_or_callback.from_user
@@ -179,21 +201,19 @@ async def get_chat_id(message: types.Message):
     await message.answer(chat_info, parse_mode="Markdown")
     
     # Также логируем в консоль
-    print(f"CHAT INFO: ID={message.chat.id}, Type={message.chat.type}, Title={message.chat.title}")
+    logging.info(f"CHAT INFO: ID={message.chat.id}, Type={message.chat.type}, Title={message.chat.title}")
 
 # Админские команды
 @dp.message(Command("admin"))
 async def admin_commands(message: types.Message):
     """Админские команды (только для админ чата)"""
-    admin_chat_id = os.getenv('ADMIN_CHAT_ID')
-    if admin_chat_id and str(message.chat.id) == admin_chat_id:
+    if is_admin_chat(message.chat.id):
         admin_text = (
             "🔧 **АДМИНСКИЕ КОМАНДЫ**\n\n"
             "/stats - Статистика заявок\n"
             "/report - Отчет за сегодня\n"
             "/getchatid - Получить ID чата\n"
-            "/broadcast - Рассылка всем пользователям\n"
-            "/export - Экспорт заявок\n\n"
+            "/test - Тест уведомлений\n\n"
             "🔗 [Веб-админка](https://my-chatbot-landing.herokuapp.com)"
         )
         await message.answer(admin_text, parse_mode="Markdown")
@@ -201,8 +221,7 @@ async def admin_commands(message: types.Message):
 @dp.message(Command("stats"))
 async def admin_stats(message: types.Message):
     """Статистика для админа"""
-    admin_chat_id = os.getenv('ADMIN_CHAT_ID')
-    if admin_chat_id and str(message.chat.id) == admin_chat_id:
+    if is_admin_chat(message.chat.id):
         try:
             total_apps = DatabaseService.get_applications_count()
             recent_apps = DatabaseService.get_recent_applications(limit=10)
@@ -223,6 +242,7 @@ async def admin_stats(message: types.Message):
                 f"• Продвинутый: {package_stats['advanced']}\n"
                 f"• Премиум: {package_stats['premium']}\n"
                 f"• Без пакета: {package_stats['none']}\n\n"
+                f"🔔 **Уведомления**: {'✅ Включены' if NOTIFICATIONS_AVAILABLE else '❌ Отключены'}\n\n"
                 f"🕐 Последние 10 заявок в админке"
             )
             
@@ -233,9 +253,32 @@ async def admin_stats(message: types.Message):
 @dp.message(Command("report"))
 async def admin_daily_report(message: types.Message):
     """Ежедневный отчет для админа"""
-    admin_chat_id = os.getenv('ADMIN_CHAT_ID')
-    if admin_chat_id and str(message.chat.id) == admin_chat_id:
-        await notification_service.send_daily_report()
+    if is_admin_chat(message.chat.id):
+        result = await notification_service.send_daily_report()
+        if not result:
+            await message.answer("📊 Отчет отправлен (или произошла ошибка)")
+
+@dp.message(Command("test"))
+async def test_notifications(message: types.Message):
+    """Тест уведомлений"""
+    if is_admin_chat(message.chat.id):
+        test_data = {
+            'id': 999,
+            'name': 'Тест Тестов',
+            'phone': '+7 (999) 000-00-00',
+            'package_interest': 'basic',
+            'user_id': message.from_user.id,
+            'created_at': '04.06.2025 15:30'
+        }
+        
+        await message.answer("🧪 Отправляем тестовое уведомление...")
+        result = await notification_service.send_all_notifications(test_data)
+        
+        result_text = f"📋 **Результат теста:**\n"
+        result_text += f"• Telegram: {'✅' if result.get('telegram') else '❌'}\n"
+        result_text += f"• Email: {'✅' if result.get('email') else '❌'}"
+        
+        await message.answer(result_text, parse_mode="Markdown")
 
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery):
@@ -483,7 +526,7 @@ async def process_name(message: types.Message, state: FSMContext):
     """Обрабатывает ввод имени"""
     await register_user(message)
     
-    name = message.text.strip()
+    name = message.text.strip() if message.text else ""
     
     if len(name) < 2:
         await message.answer(
@@ -507,7 +550,7 @@ async def process_phone(message: types.Message, state: FSMContext):
     """Обрабатывает ввод телефона"""
     await register_user(message)
     
-    phone = message.text.strip()
+    phone = message.text.strip() if message.text else ""
     
     # Базовая проверка формата телефона
     if len(phone) < 10 or not any(char.isdigit() for char in phone):
@@ -630,7 +673,7 @@ async def universal_message_handler(message: types.Message):
     await register_user(message)
     
     # Логируем все сообщения в консоль для отладки
-    print(f"MESSAGE: Chat={message.chat.id}, User={message.from_user.id}, Text='{message.text[:50] if message.text else 'No text'}...'")
+    logging.info(f"MESSAGE: Chat={message.chat.id}, User={message.from_user.id}, Text='{message.text[:50] if message.text else 'No text'}...'")
     
     # Если сообщение содержит "debug" в группе - показываем отладочную информацию
     if message.chat.type in ['group', 'supergroup'] and message.text and 'debug' in message.text.lower():
@@ -639,7 +682,8 @@ async def universal_message_handler(message: types.Message):
             f"Chat ID: `{message.chat.id}`\n"
             f"User ID: `{message.from_user.id}`\n"
             f"Message ID: {message.message_id}\n"
-            f"Chat Type: {message.chat.type}"
+            f"Chat Type: {message.chat.type}\n"
+            f"Admin Chat: {'✅' if is_admin_chat(message.chat.id) else '❌'}"
         )
         await message.answer(debug_info, parse_mode="Markdown")
         return
@@ -702,6 +746,8 @@ async def main():
             print(f"   ✅ Email уведомления: {manager_email}")
         else:
             print("   ❌ Email уведомления: не настроены")
+        
+        print(f"🔧 Сервис уведомлений: {'✅ Включен' if NOTIFICATIONS_AVAILABLE else '❌ Заглушка'}")
         
         await dp.start_polling(bot)
     except Exception as e:
