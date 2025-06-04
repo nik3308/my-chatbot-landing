@@ -163,6 +163,24 @@ async def start_handler(message: types.Message):
         parse_mode="Markdown"
     )
 
+@dp.message(Command("getchatid"))
+async def get_chat_id(message: types.Message):
+    """Получает chat.id для настройки уведомлений"""
+    chat_info = (
+        f"📋 **Информация о чате:**\n\n"
+        f"🆔 **Chat ID**: `{message.chat.id}`\n"
+        f"📝 **Название**: {message.chat.title or 'Личный чат'}\n"
+        f"👥 **Тип**: {message.chat.type}\n"
+        f"👤 **Ваш ID**: `{message.from_user.id}`\n\n"
+        f"🔧 **Для настройки уведомлений используйте:**\n"
+        f"`heroku config:set ADMIN_CHAT_ID=\"{message.chat.id}\" -a my-chatbot-landing`"
+    )
+    
+    await message.answer(chat_info, parse_mode="Markdown")
+    
+    # Также логируем в консоль
+    print(f"CHAT INFO: ID={message.chat.id}, Type={message.chat.type}, Title={message.chat.title}")
+
 # Админские команды
 @dp.message(Command("admin"))
 async def admin_commands(message: types.Message):
@@ -173,6 +191,7 @@ async def admin_commands(message: types.Message):
             "🔧 **АДМИНСКИЕ КОМАНДЫ**\n\n"
             "/stats - Статистика заявок\n"
             "/report - Отчет за сегодня\n"
+            "/getchatid - Получить ID чата\n"
             "/broadcast - Рассылка всем пользователям\n"
             "/export - Экспорт заявок\n\n"
             "🔗 [Веб-админка](https://my-chatbot-landing.herokuapp.com)"
@@ -606,32 +625,51 @@ async def process_phone(message: types.Message, state: FSMContext):
     await state.clear()
 
 @dp.message()
-async def unknown_message(message: types.Message):
-    """Обработчик неизвестных сообщений"""
+async def universal_message_handler(message: types.Message):
+    """Универсальный обработчик сообщений"""
     await register_user(message)
     
-    # Логируем неизвестное сообщение
-    DatabaseService.log_user_action(
-        telegram_id=message.from_user.id,
-        action="unknown_message",
-        data={"text": message.text[:100]}  # Первые 100 символов
-    )
+    # Логируем все сообщения в консоль для отладки
+    print(f"MESSAGE: Chat={message.chat.id}, User={message.from_user.id}, Text='{message.text[:50] if message.text else 'No text'}...'")
     
-    unknown_text = (
-        "🤔 Извините, я не понимаю эту команду.\n\n"
-        "Я могу помочь вам:\n"
-        "• 📦 Узнать о пакетах услуг\n"
-        "• 🔧 Изучить этапы разработки\n" 
-        "• 📝 Оставить заявку на разработку бота\n"
-        "• 💬 Связаться с менеджером напрямую\n\n"
-        "**Выберите нужный раздел:**"
-    )
+    # Если сообщение содержит "debug" в группе - показываем отладочную информацию
+    if message.chat.type in ['group', 'supergroup'] and message.text and 'debug' in message.text.lower():
+        debug_info = (
+            f"🐛 **DEBUG INFO:**\n"
+            f"Chat ID: `{message.chat.id}`\n"
+            f"User ID: `{message.from_user.id}`\n"
+            f"Message ID: {message.message_id}\n"
+            f"Chat Type: {message.chat.type}"
+        )
+        await message.answer(debug_info, parse_mode="Markdown")
+        return
     
-    await message.answer(
-        unknown_text,
-        reply_markup=get_main_menu(),
-        parse_mode="Markdown"
-    )
+    # Для личных чатов показываем обычное сообщение о неизвестной команде
+    if message.chat.type == 'private':
+        # Логируем неизвестное сообщение
+        DatabaseService.log_user_action(
+            telegram_id=message.from_user.id,
+            action="unknown_message",
+            data={"text": (message.text or "")[:100]}  # Первые 100 символов
+        )
+        
+        unknown_text = (
+            "🤔 Извините, я не понимаю эту команду.\n\n"
+            "Я могу помочь вам:\n"
+            "• 📦 Узнать о пакетах услуг\n"
+            "• 🔧 Изучить этапы разработки\n" 
+            "• 📝 Оставить заявку на разработку бота\n"
+            "• 💬 Связаться с менеджером напрямую\n\n"
+            "**Выберите нужный раздел:**"
+        )
+        
+        await message.answer(
+            unknown_text,
+            reply_markup=get_main_menu(),
+            parse_mode="Markdown"
+        )
+    
+    # В группах просто логируем без ответа (если не debug)
 
 async def main():
     """Основная функция запуска бота"""
@@ -673,49 +711,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-#!/usr/bin/env python3
-"""
-Временный скрипт для получения chat.id
-Добавьте этот код в main.py временно
-"""
-
-# Добавьте этот обработчик в main.py:
-
-@dp.message(Command("getchatid"))
-async def get_chat_id(message: types.Message):
-    """Получает chat.id для настройки уведомлений"""
-    chat_info = (
-        f"📋 **Информация о чате:**\n\n"
-        f"🆔 **Chat ID**: `{message.chat.id}`\n"
-        f"📝 **Название**: {message.chat.title or 'Личный чат'}\n"
-        f"👥 **Тип**: {message.chat.type}\n"
-        f"👤 **Ваш ID**: `{message.from_user.id}`\n\n"
-        f"🔧 **Для настройки уведомлений используйте:**\n"
-        f"`heroku config:set ADMIN_CHAT_ID=\"{message.chat.id}\" -a my-chatbot-landing`"
-    )
-    
-    await message.answer(chat_info, parse_mode="Markdown")
-    
-    # Также логируем в консоль
-    print(f"CHAT INFO: ID={message.chat.id}, Type={message.chat.type}, Title={message.chat.title}")
-
-# Добавьте также универсальный обработчик для отладки:
-
-@dp.message()
-async def debug_message(message: types.Message):
-    """Отладочный обработчик - показывает информацию о любом сообщении"""
-    # Только для групп и только если сообщение содержит слово "debug"
-    if message.chat.type in ['group', 'supergroup'] and 'debug' in message.text.lower():
-        debug_info = (
-            f"🐛 **DEBUG INFO:**\n"
-            f"Chat ID: `{message.chat.id}`\n"
-            f"User ID: `{message.from_user.id}`\n"
-            f"Message ID: {message.message_id}\n"
-            f"Chat Type: {message.chat.type}"
-        )
-        await message.answer(debug_info, parse_mode="Markdown")
-    
-    # Логируем все сообщения в консоль для отладки
-    print(f"MESSAGE: Chat={message.chat.id}, User={message.from_user.id}, Text='{message.text[:50]}...'")
