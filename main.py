@@ -342,9 +342,14 @@ async def unknown_message(message: types.Message):
 
 async def main():
     """Основная функция запуска бота"""
-    print("🤖 Бот запущен и готов к работе!")
+    print("🤖 Запуск бота...")
     
     try:
+        # Удаляем webhook если он установлен
+        await bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook удален, переключаемся на polling")
+        
+        print("🤖 Бот запущен и готов к работе!")
         await dp.start_polling(bot)
     except Exception as e:
         logging.error(f"Ошибка при запуске бота: {e}")
