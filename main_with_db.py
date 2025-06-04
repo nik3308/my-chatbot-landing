@@ -328,4 +328,214 @@ async def handle_contact_request(callback: types.CallbackQuery, package_interest
     builder = InlineKeyboardBuilder()
     button_text = "📞 Обновить контакт" if has_application else "📞 Оставить контакт"
     builder.add(InlineKeyboardButton(text=button_text, callback_data="start_contact"))
-    builder.add(InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_to
+    builder.add(InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_to_main"))
+    builder.adjust(1)
+    
+    await callback.message.edit_text(
+        contact_text,
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "start_contact")
+async def start_contact_collection(callback: types.CallbackQuery, state: FSMContext):
+    """Начинает сбор контактных данных"""
+    await register_user(callback)
+    
+    # Логируем начало заполнения заявки
+    DatabaseService.log_user_action(
+        telegram_id=callback.from_user.id,
+        action="start_contact_form"
+    )
+    
+    await state.set_state(ContactForm.waiting_for_name)
+    
+    contact_text = (
+        "👤 **Как к вам обращаться?**\n\n"
+        "Напишите ваше имя:"
+    )
+    
+    # Удаляем клавиатуру для ввода текста
+    await callback.message.edit_text(
+        contact_text,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.message(ContactForm.waiting_for_name)
+async def process_name(message: types.Message, state: FSMContext):
+    """Обрабатывает ввод имени"""
+    await register_user(message)
+    
+    name = message.text.strip()
+    
+    if len(name) < 2:
+        await message.answer(
+            "😊 Пожалуйста, введите корректное имя (не менее 2 символов):"
+        )
+        return
+    
+    await state.update_data(name=name)
+    await state.set_state(ContactForm.waiting_for_phone)
+    
+    phone_text = (
+        f"📞 **Отлично, {name}!**\n\n"
+        "Теперь укажите ваш номер телефона:\n"
+        "Например: +7 (999) 123-45-67"
+    )
+    
+    await message.answer(phone_text, parse_mode="Markdown")
+
+@dp.message(ContactForm.waiting_for_phone)
+async def process_phone(message: types.Message, state: FSMContext):
+    """Обрабатывает ввод телефона"""
+    await register_user(message)
+    
+    phone = message.text.strip()
+    
+    # Базовая проверка формата телефона
+    if len(phone) < 10 or not any(char.isdigit() for char in phone):
+        await message.answer(
+            "📞 Пожалуйста, введите корректный номер телефона.\n"
+            "Например: +7 (999) 123-45-67 или 89991234567"
+        )
+        return
+    
+    # Получаем сохраненные данные
+    data = await state.get_data()
+    name = data.get("name")
+    telegram_id = message.from_user.id
+    
+    # Получаем информацию о пакете из состояния диалога
+    dialog_state, dialog_data = DatabaseService.get_dialog_state(telegram_id)
+    package_interest = dialog_data.get("package") if dialog_data else None
+    
+    try:
+        # Сохраняем заявку в базу данных
+        application = DatabaseService.create_application(
+            telegram_id=telegram_id,
+            name=name,
+            phone=phone,
+            package_interest=package_interest
+        )
+        
+        # Обновляем контактные данные пользователя
+        DatabaseService.update_user_contact_data(telegram_id, name, phone)
+        
+        # Логируем успешную подачу заявки
+        DatabaseService.log_user_action(
+            telegram_id=telegram_id,
+            action="submit_application",
+            data={
+                "name": name,
+                "phone": phone,
+                "package_interest": package_interest
+            }
+        )
+        
+        # Очищаем состояние диалога
+        DatabaseService.clear_dialog_state(telegram_id)
+        
+        # Формируем текст подтверждения
+        success_text = (
+            f"✅ **Спасибо, {name}!**\n\n"
+            "Ваша заявка принята! 🎉\n\n"
+            f"📋 **Ваши данные:**\n"
+            f"👤 Имя: {name}\n"
+            f"📞 Телефон: {phone}\n"
+        )
+        
+        if package_interest:
+            package_name = PACKAGES_DATA.get(package_interest, {}).get("name", "")
+            success_text += f"📦 Интересующий пакет: {package_name}\n"
+        
+        success_text += (
+            f"\n🆔 **Номер заявки**: #{application.id}\n\n"
+            "💼 Наш менеджер свяжется с вами в рабочее время "
+            "для обсуждения вашего проекта.\n\n"
+            "**Рабочее время**: ПН-ПТ с 9:00 до 18:00 МСК ⏰"
+        )
+        
+        # Отправляем уведомление в логи для менеджера
+        logging.info(
+            f"🆕 НОВАЯ ЗАЯВКА #{application.id}\n"
+            f"👤 Имя: {name}\n"
+            f"📞 Телефон: {phone}\n"
+            f"📦 Пакет: {package_interest or 'не указан'}\n"
+            f"🆔 Telegram ID: {telegram_id}\n"
+            f"⏰ Время: {application.created_at}"
+        )
+        
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении заявки: {e}")
+        success_text = (
+            f"❌ **Извините, {name}!**\n\n"
+            "Произошла ошибка при сохранении заявки.\n"
+            "Пожалуйста, попробуйте позже или свяжитесь с нами напрямую.\n\n"
+            "📞 **Контакты для связи:**\n"
+            "• Телефон: +7 (XXX) XXX-XX-XX\n"
+            "• Email: info@ai-solutions.ru"
+        )
+    
+    await message.answer(
+        success_text,
+        reply_markup=get_back_menu(),
+        parse_mode="Markdown"
+    )
+    
+    # Очищаем состояние FSM
+    await state.clear()
+
+@dp.message()
+async def unknown_message(message: types.Message):
+    """Обработчик неизвестных сообщений"""
+    await register_user(message)
+    
+    # Логируем неизвестное сообщение
+    DatabaseService.log_user_action(
+        telegram_id=message.from_user.id,
+        action="unknown_message",
+        data={"text": message.text[:100]}  # Первые 100 символов
+    )
+    
+    unknown_text = (
+        "🤔 Извините, я не понимаю эту команду.\n\n"
+        "Я могу помочь вам:\n"
+        "• 📦 Узнать о пакетах услуг\n"
+        "• 🔧 Изучить этапы разработки\n" 
+        "• 📝 Оставить заявку на разработку бота\n\n"
+        "**Выберите нужный раздел:**"
+    )
+    
+    await message.answer(
+        unknown_text,
+        reply_markup=get_main_menu(),
+        parse_mode="Markdown"
+    )
+
+async def main():
+    """Основная функция запуска бота"""
+    print("🤖 Инициализация базы данных...")
+    
+    try:
+        # Создаем таблицы в базе данных
+        create_tables()
+        print("✅ База данных инициализирована")
+        
+        # Удаляем webhook если он установлен
+        await bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook удален, переключаемся на polling")
+        
+        print("🤖 Бот запущен и готов к работе!")
+        print("📊 Статистика:")
+        print(f"   • Всего заявок: {DatabaseService.get_applications_count()}")
+        
+        await dp.start_polling(bot)
+    except Exception as e:
+        logging.error(f"Ошибка при запуске бота: {e}")
+    finally:
+        await bot.session.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
