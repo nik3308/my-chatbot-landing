@@ -673,3 +673,49 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+#!/usr/bin/env python3
+"""
+Временный скрипт для получения chat.id
+Добавьте этот код в main.py временно
+"""
+
+# Добавьте этот обработчик в main.py:
+
+@dp.message(Command("getchatid"))
+async def get_chat_id(message: types.Message):
+    """Получает chat.id для настройки уведомлений"""
+    chat_info = (
+        f"📋 **Информация о чате:**\n\n"
+        f"🆔 **Chat ID**: `{message.chat.id}`\n"
+        f"📝 **Название**: {message.chat.title or 'Личный чат'}\n"
+        f"👥 **Тип**: {message.chat.type}\n"
+        f"👤 **Ваш ID**: `{message.from_user.id}`\n\n"
+        f"🔧 **Для настройки уведомлений используйте:**\n"
+        f"`heroku config:set ADMIN_CHAT_ID=\"{message.chat.id}\" -a my-chatbot-landing`"
+    )
+    
+    await message.answer(chat_info, parse_mode="Markdown")
+    
+    # Также логируем в консоль
+    print(f"CHAT INFO: ID={message.chat.id}, Type={message.chat.type}, Title={message.chat.title}")
+
+# Добавьте также универсальный обработчик для отладки:
+
+@dp.message()
+async def debug_message(message: types.Message):
+    """Отладочный обработчик - показывает информацию о любом сообщении"""
+    # Только для групп и только если сообщение содержит слово "debug"
+    if message.chat.type in ['group', 'supergroup'] and 'debug' in message.text.lower():
+        debug_info = (
+            f"🐛 **DEBUG INFO:**\n"
+            f"Chat ID: `{message.chat.id}`\n"
+            f"User ID: `{message.from_user.id}`\n"
+            f"Message ID: {message.message_id}\n"
+            f"Chat Type: {message.chat.type}"
+        )
+        await message.answer(debug_info, parse_mode="Markdown")
+    
+    # Логируем все сообщения в консоль для отладки
+    print(f"MESSAGE: Chat={message.chat.id}, User={message.from_user.id}, Text='{message.text[:50]}...'")
