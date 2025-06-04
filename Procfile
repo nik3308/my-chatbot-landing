@@ -1,2 +1,2 @@
-web: python web_admin.py
+web: python simple_admin.py
 worker: python main.py
