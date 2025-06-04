@@ -12,12 +12,18 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # Импорт наших модулей
 from models import create_tables
 from database_service import DatabaseService
+from notification_service import NotificationService
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Получение токена из переменных окружения
+# Получение конфигурации из переменных окружения
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+COMPANY_NAME = os.getenv('COMPANY_NAME', 'AI-решения')
+MANAGER_PHONE = os.getenv('MANAGER_PHONE', '+7 (XXX) XXX-XX-XX')
+MANAGER_EMAIL_CONTACT = os.getenv('MANAGER_EMAIL_CONTACT', 'info@ai-solutions.ru')
+WORK_HOURS = os.getenv('WORK_HOURS', 'ПН-ПТ с 9:00 до 18:00 МСК')
+
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в переменных окружения")
 
@@ -26,10 +32,16 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# Инициализация сервиса уведомлений
+notification_service = NotificationService()
+
 # Состояния для FSM
 class ContactForm(StatesGroup):
     waiting_for_name = State()
     waiting_for_phone = State()
+
+class AdminCommands(StatesGroup):
+    waiting_for_broadcast_message = State()
 
 # Данные о пакетах услуг
 PACKAGES_DATA = {
@@ -85,6 +97,7 @@ def get_main_menu():
     builder.add(InlineKeyboardButton(text="📦 Пакеты услуг", callback_data="packages"))
     builder.add(InlineKeyboardButton(text="🔧 Этапы разработки", callback_data="stages"))
     builder.add(InlineKeyboardButton(text="📝 Оставить заявку", callback_data="contact"))
+    builder.add(InlineKeyboardButton(text="💬 Связаться напрямую", callback_data="direct_contact"))
     builder.adjust(1)
     return builder.as_markup()
 
@@ -135,7 +148,7 @@ async def start_handler(message: types.Message):
     )
     
     welcome_text = (
-        "🤖 Привет! Я автоматизированный помощник компании **\"AI-решения\"**!\n\n"
+        f"🤖 Привет! Я автоматизированный помощник компании **\"{COMPANY_NAME}\"**!\n\n"
         "Помогу вам:\n"
         "• 📋 Узнать о наших пакетах услуг по созданию чат-ботов\n"
         "• 🔧 Понять этапы разработки\n"
@@ -150,6 +163,61 @@ async def start_handler(message: types.Message):
         parse_mode="Markdown"
     )
 
+# Админские команды
+@dp.message(Command("admin"))
+async def admin_commands(message: types.Message):
+    """Админские команды (только для админ чата)"""
+    admin_chat_id = os.getenv('ADMIN_CHAT_ID')
+    if admin_chat_id and str(message.chat.id) == admin_chat_id:
+        admin_text = (
+            "🔧 **АДМИНСКИЕ КОМАНДЫ**\n\n"
+            "/stats - Статистика заявок\n"
+            "/report - Отчет за сегодня\n"
+            "/broadcast - Рассылка всем пользователям\n"
+            "/export - Экспорт заявок\n\n"
+            "🔗 [Веб-админка](https://my-chatbot-landing.herokuapp.com)"
+        )
+        await message.answer(admin_text, parse_mode="Markdown")
+
+@dp.message(Command("stats"))
+async def admin_stats(message: types.Message):
+    """Статистика для админа"""
+    admin_chat_id = os.getenv('ADMIN_CHAT_ID')
+    if admin_chat_id and str(message.chat.id) == admin_chat_id:
+        try:
+            total_apps = DatabaseService.get_applications_count()
+            recent_apps = DatabaseService.get_recent_applications(limit=10)
+            
+            # Группируем по пакетам
+            package_stats = {'basic': 0, 'advanced': 0, 'premium': 0, 'none': 0}
+            for app in recent_apps:
+                if app.package_interest:
+                    package_stats[app.package_interest] = package_stats.get(app.package_interest, 0) + 1
+                else:
+                    package_stats['none'] += 1
+            
+            stats_text = (
+                f"📊 **СТАТИСТИКА БОТА**\n\n"
+                f"📋 **Всего заявок**: {total_apps}\n\n"
+                f"📦 **По пакетам**:\n"
+                f"• Базовый: {package_stats['basic']}\n"
+                f"• Продвинутый: {package_stats['advanced']}\n"
+                f"• Премиум: {package_stats['premium']}\n"
+                f"• Без пакета: {package_stats['none']}\n\n"
+                f"🕐 Последние 10 заявок в админке"
+            )
+            
+            await message.answer(stats_text, parse_mode="Markdown")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка получения статистики: {e}")
+
+@dp.message(Command("report"))
+async def admin_daily_report(message: types.Message):
+    """Ежедневный отчет для админа"""
+    admin_chat_id = os.getenv('ADMIN_CHAT_ID')
+    if admin_chat_id and str(message.chat.id) == admin_chat_id:
+        await notification_service.send_daily_report()
+
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery):
     """Возврат в главное меню"""
@@ -163,6 +231,31 @@ async def back_to_main(callback: types.CallbackQuery):
     await callback.message.edit_text(
         welcome_text,
         reply_markup=get_main_menu(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "direct_contact")
+async def show_direct_contact(callback: types.CallbackQuery):
+    """Показывает прямые контакты"""
+    await register_user(callback)
+    
+    contact_text = (
+        f"📞 **ПРЯМАЯ СВЯЗЬ С {COMPANY_NAME.upper()}**\n\n"
+        f"**Наши контакты:**\n"
+        f"📞 Телефон: {MANAGER_PHONE}\n"
+        f"📧 Email: {MANAGER_EMAIL_CONTACT}\n\n"
+        f"⏰ **Рабочее время**: {WORK_HOURS}\n\n"
+        f"💡 **Также вы можете**:\n"
+        f"• 📝 Оставить заявку через бота\n"
+        f"• 📦 Изучить наши пакеты услуг\n"
+        f"• 🔧 Узнать этапы разработки\n\n"
+        f"**Мы ответим в течение 1 часа в рабочее время!** ⚡"
+    )
+    
+    await callback.message.edit_text(
+        contact_text,
+        reply_markup=get_back_menu(),
         parse_mode="Markdown"
     )
     await callback.answer()
@@ -224,6 +317,7 @@ async def show_package_details(callback: types.CallbackQuery):
     
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="📝 Оставить заявку", callback_data=f"contact_package_{package_type}"))
+    builder.add(InlineKeyboardButton(text="💬 Связаться напрямую", callback_data="direct_contact"))
     builder.add(InlineKeyboardButton(text="📦 Другие пакеты", callback_data="packages"))
     builder.add(InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_to_main"))
     builder.adjust(1)
@@ -261,6 +355,7 @@ async def show_stages(callback: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="📦 Посмотреть пакеты", callback_data="packages"))
     builder.add(InlineKeyboardButton(text="📝 Оставить заявку", callback_data="contact"))
+    builder.add(InlineKeyboardButton(text="💬 Связаться напрямую", callback_data="direct_contact"))
     builder.add(InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_to_main"))
     builder.adjust(1)
     
@@ -294,10 +389,11 @@ async def handle_contact_request(callback: types.CallbackQuery, package_interest
     if has_application:
         contact_text = (
             "📋 **У вас уже есть активная заявка!**\n\n"
-            "Наш менеджер обязательно с вами свяжется.\n"
+            "Наш менеджер обязательно с вами свяжется в рабочее время.\n"
             "Если хотите обновить данные или уточнить детали, "
             "можете оставить новую заявку.\n\n"
-            "**Оставить новую заявку?**"
+            f"⏰ **Рабочее время**: {WORK_HOURS}\n\n"
+            "**Хотите оставить новую заявку?**"
         )
     else:
         contact_text = (
@@ -314,11 +410,10 @@ async def handle_contact_request(callback: types.CallbackQuery, package_interest
             package_name = PACKAGES_DATA.get(package_interest, {}).get("name", "")
             contact_text += f"📦 **Интересующий пакет**: {package_name}\n\n"
         
-        contact_text += "**Готовы оставить контакт?**"
+        contact_text += f"⏰ **Рабочее время**: {WORK_HOURS}\n\n**Готовы оставить контакт?**"
     
     # Сохраняем интерес к пакету в состоянии
     if package_interest:
-        await callback.message.bot.session.close()  # Закрываем сессию перед сохранением
         DatabaseService.save_dialog_state(
             telegram_id=telegram_id,
             state="package_interest",
@@ -328,6 +423,7 @@ async def handle_contact_request(callback: types.CallbackQuery, package_interest
     builder = InlineKeyboardBuilder()
     button_text = "📞 Обновить контакт" if has_application else "📞 Оставить контакт"
     builder.add(InlineKeyboardButton(text=button_text, callback_data="start_contact"))
+    builder.add(InlineKeyboardButton(text="💬 Связаться напрямую", callback_data="direct_contact"))
     builder.add(InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_to_main"))
     builder.adjust(1)
     
@@ -428,11 +524,25 @@ async def process_phone(message: types.Message, state: FSMContext):
             telegram_id=telegram_id,
             action="submit_application",
             data={
+                "application_id": application.id,
                 "name": name,
                 "phone": phone,
                 "package_interest": package_interest
             }
         )
+        
+        # Отправляем уведомления менеджеру
+        application_data = {
+            'id': application.id,
+            'name': name,
+            'phone': phone,
+            'package_interest': package_interest,
+            'user_id': telegram_id,
+            'created_at': application.created_at.strftime('%d.%m.%Y %H:%M')
+        }
+        
+        # Асинхронно отправляем уведомления
+        asyncio.create_task(notification_service.send_all_notifications(application_data))
         
         # Очищаем состояние диалога
         DatabaseService.clear_dialog_state(telegram_id)
@@ -452,12 +562,19 @@ async def process_phone(message: types.Message, state: FSMContext):
         
         success_text += (
             f"\n🆔 **Номер заявки**: #{application.id}\n\n"
-            "💼 Наш менеджер свяжется с вами в рабочее время "
-            "для обсуждения вашего проекта.\n\n"
-            "**Рабочее время**: ПН-ПТ с 9:00 до 18:00 МСК ⏰"
+            f"💼 Наш менеджер свяжется с вами в рабочее время "
+            f"для обсуждения вашего проекта.\n\n"
+            f"⏰ **Рабочее время**: {WORK_HOURS}\n\n"
+            f"📞 **Экстренная связь**: {MANAGER_PHONE}\n"
+            f"📧 **Email**: {MANAGER_EMAIL_CONTACT}\n\n"
+            f"🚀 **Следующие шаги**:\n"
+            f"• Менеджер изучит ваш запрос\n"
+            f"• Подготовит персональное предложение\n"
+            f"• Свяжется для уточнения деталей\n"
+            f"• Составит план разработки"
         )
         
-        # Отправляем уведомление в логи для менеджера
+        # Отправляем уведомление в логи для менеджера (старый способ)
         logging.info(
             f"🆕 НОВАЯ ЗАЯВКА #{application.id}\n"
             f"👤 Имя: {name}\n"
@@ -473,9 +590,10 @@ async def process_phone(message: types.Message, state: FSMContext):
             f"❌ **Извините, {name}!**\n\n"
             "Произошла ошибка при сохранении заявки.\n"
             "Пожалуйста, попробуйте позже или свяжитесь с нами напрямую.\n\n"
-            "📞 **Контакты для связи:**\n"
-            "• Телефон: +7 (XXX) XXX-XX-XX\n"
-            "• Email: info@ai-solutions.ru"
+            f"📞 **Контакты для связи:**\n"
+            f"• Телефон: {MANAGER_PHONE}\n"
+            f"• Email: {MANAGER_EMAIL_CONTACT}\n\n"
+            f"⏰ **Рабочее время**: {WORK_HOURS}"
         )
     
     await message.answer(
@@ -504,7 +622,8 @@ async def unknown_message(message: types.Message):
         "Я могу помочь вам:\n"
         "• 📦 Узнать о пакетах услуг\n"
         "• 🔧 Изучить этапы разработки\n" 
-        "• 📝 Оставить заявку на разработку бота\n\n"
+        "• 📝 Оставить заявку на разработку бота\n"
+        "• 💬 Связаться с менеджером напрямую\n\n"
         "**Выберите нужный раздел:**"
     )
     
@@ -527,9 +646,24 @@ async def main():
         await bot.delete_webhook(drop_pending_updates=True)
         print("✅ Webhook удален, переключаемся на polling")
         
-        print("🤖 Бот запущен и готов к работе!")
+        print(f"🤖 Бот для {COMPANY_NAME} запущен и готов к работе!")
         print("📊 Статистика:")
         print(f"   • Всего заявок: {DatabaseService.get_applications_count()}")
+        
+        # Проверяем настройки уведомлений
+        admin_chat_id = os.getenv('ADMIN_CHAT_ID')
+        manager_email = os.getenv('MANAGER_EMAIL')
+        
+        print("🔔 Настройки уведомлений:")
+        if admin_chat_id:
+            print(f"   ✅ Telegram уведомления: {admin_chat_id}")
+        else:
+            print("   ❌ Telegram уведомления: не настроены")
+        
+        if manager_email:
+            print(f"   ✅ Email уведомления: {manager_email}")
+        else:
+            print("   ❌ Email уведомления: не настроены")
         
         await dp.start_polling(bot)
     except Exception as e:
