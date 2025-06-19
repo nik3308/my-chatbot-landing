@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 # Получение конфигурации из переменных окружения
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 COMPANY_NAME = os.getenv('COMPANY_NAME', 'AI-решения')
-MANAGER_PHONE = os.getenv('MANAGER_PHONE', '+7 (999) 123-45-67')
+MANAGER_PHONE = os.getenv('MANAGER_PHONE', '+7 (981) 685-36-38')
 MANAGER_EMAIL_CONTACT = os.getenv('MANAGER_EMAIL_CONTACT', 'info@ai-solutions.ru')
 WORK_HOURS = os.getenv('WORK_HOURS', 'ПН-ПТ с 9:00 до 18:00 МСК')
 
